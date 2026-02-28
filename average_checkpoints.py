@@ -2,7 +2,10 @@ import torch
 import os
 from collections import OrderedDict
 
-source_folder = './'
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+source_folder = os.path.join(BASE_DIR, 'database/model/')
 starts_with = "step"
 ends_with   = ".pth.tar"
 

@@ -70,7 +70,7 @@ class MultiHeadAttention(nn.Module):
         # Project input sequence to query key value
         queries = self.proj_queries(query_sequences) # (batch_size, query_sequence_pad_length, num_heads * d_queries)
 
-        keys, values = self.proj_key_values(key_value_sequence_lengths).split(split_size = self.num_heads * self.dim_keys, dim = -1)
+        keys, values = self.proj_key_values(key_value_sequences).split(split_size = self.num_heads * self.dim_keys, dim = -1)
         # (batch_size, query_sequence_pad_length, num_heads * d_key), #(batch_size, query_sequence_pad_length, num_heads * d_value)
 
         # Split the last dimension by the n_heads subspaces
@@ -82,9 +82,9 @@ class MultiHeadAttention(nn.Module):
         # enumerating the new batch size to be batch_size * num_heads, (to apply batch matrix multiplication later)
 
         # (batch_size * n_heads, query/key_value sequence_pad_length, dim_queries/keys/values)
-        queries = queries.permute(0, 2, 1, 3).views(-1, query_sequence_pad_length, self.dim_queries)
-        keys    = keys.permute(0, 2, 1, 3).views(-1, key_value_sequence_pad_length, self.dim_keys)
-        values  = values.permute(0, 2, 1, 3).views(-1, key_value_sequence_pad_length, self.dim_values)
+        queries = queries.permute(0, 2, 1, 3).contiguous().view(-1, query_sequence_pad_length, self.dim_queries)
+        keys = keys.permute(0, 2, 1, 3).contiguous().view(-1, key_value_sequence_pad_length, self.dim_keys)
+        values = values.permute(0, 2, 1, 3).contiguous().view(-1, key_value_sequence_pad_length, self.dim_values)
 
         # Attention weight learns the relativity of a token in query versus each token in keys
         attention_weights = torch.bmm(queries, keys.permute(0, 2, 1))
@@ -95,18 +95,15 @@ class MultiHeadAttention(nn.Module):
         attention_weights = attention_weights * (1. / math.sqrt(self.dim_keys))
 
         # Before compute the softmax weights, we should eliminate the effect of padding token
-
-
         # (batch_size * n_heads, query_sequence_pad_length, key_value_sequence_pad_length)
-        not_pad_in_keys = torch.LongTensor(range(key_value_sequence_pad_length)).unsqueeze(0).unsqueeze(0).expand_as(
+        not_pad_in_keys = torch.arange(key_value_sequence_pad_length).unsqueeze(0).unsqueeze(0).expand_as(
+            attention_weights
+        ).to(device)
+        not_pad_in_keys = not_pad_in_keys < key_value_sequence_lengths.repeat_interleave(self.num_heads).unsqueeze(1).unsqueeze(2).expand_as(
             attention_weights
         ).to(device)
 
-        not_pad_in_keys = not_pad_in_keys < key_value_sequence_lengths.repeat_interleave(self.num_heads).unsqueeze(0).unsqueeze(0).expand_as(
-            attention_weights
-        ).to(device)
-
-        attention_weights = attention_weights.masked_fill(~not_pad_in_keys, -math.inf)
+        attention_weights = attention_weights.masked_fill(~not_pad_in_keys, -1e9)
 
         # If this is not self-attention in the decoder, keys chronologically ahead of queries
         if self.in_decoder and self_attention :
@@ -139,7 +136,7 @@ class MultiHeadAttention(nn.Module):
         # Project to the output space
         sequences = self.proj_output(sequences)  # (batch_size, query_sequence_pad_length, dim_model)
 
-        sequences = self.apply(dropout) + prev_query_sequences
+        sequences = self.dropout_layer(sequences) + prev_query_sequences
 
         return sequences
 
@@ -220,7 +217,7 @@ class Encoder(nn.Module):
         self.dim_values  = dim_values
         self.dim_inner   = dim_inner
         self.num_layers  = num_layers
-        self.dropout     = nn.Dropout(dropout)
+        self.dropout_prob = dropout
 
         # Embedding Layer
         self.embedding = nn.Embedding(vocab_size, dim_model)
@@ -247,13 +244,13 @@ class Encoder(nn.Module):
                 num_heads = self.num_heads,
                 dim_queries = self.dim_queries,
                 dim_values  = self.dim_values,
-                dropout     = self.dropout,
+                dropout     = self.dropout_prob,
                 in_decoder  = False
             ),
             PositionWiseFFN(
                 d_model = self.dim_model,
                 d_inner = self.dim_inner,
-                dropout = self.dropout
+                dropout = self.dropout_prob
             )
         ])
         return encoder_layer
@@ -318,7 +315,7 @@ class Decoder(nn.Module):
         self.dim_values  = dim_values
         self.dim_inner   = dim_inner
         self.num_layers  = num_layers
-        self.dropout     = nn.Dropout(dropout)
+        self.dropout_prob = dropout
 
         # Embedding Layer
         self.embedding = nn.Embedding(vocab_size, dim_model)
@@ -326,8 +323,8 @@ class Decoder(nn.Module):
         # Set the positional encoding tensor to be un-update-able
         self.positional_encoding.requires_grad = False
 
-        # Encoder Layers
-        self.encoder_layers = nn.ModuleList([self.make_encoder_layer() for _ in range(num_layers)])
+        # Decoder Layers
+        self.decoder_layers = nn.ModuleList([self.make_decoder_layer() for _ in range(num_layers)])
 
         # Dropout Layers
         self.apply_dropout = nn.Dropout(dropout)
@@ -342,13 +339,13 @@ class Decoder(nn.Module):
         """
         Create a single layer in the Decoder architecture by combining two Multi-Head Attention and a FFN layers.
         """
-        encoder_layer = nn.ModuleList([
+        decoder_layer = nn.ModuleList([
             MultiHeadAttention(
                 dim_model = self.dim_model,
                 num_heads = self.num_heads,
                 dim_queries = self.dim_queries,
                 dim_values  = self.dim_values,
-                dropout     = self.dropout,
+                dropout     = self.dropout_prob,
                 in_decoder  = True
             ),
             MultiHeadAttention(
@@ -356,16 +353,16 @@ class Decoder(nn.Module):
                 num_heads=self.num_heads,
                 dim_queries=self.dim_queries,
                 dim_values=self.dim_values,
-                dropout=self.dropout,
+                dropout=self.dropout_prob,
                 in_decoder = True
             ),
             PositionWiseFFN(
                 d_model = self.dim_model,
                 d_inner = self.dim_inner,
-                dropout = self.dropout
+                dropout = self.dropout_prob
             )
         ])
-        return encoder_layer
+        return decoder_layer
 
     def forward(self, decoder_sequences, decoder_sequences_length, encoder_sequences, encoder_sequences_length):
         """
@@ -377,7 +374,7 @@ class Decoder(nn.Module):
         :return: encoded source language sequences, a tensor of shape (batch_size, pad_length, dim_model)
         """
 
-        pad_length = encoder_sequences.size(1)
+        pad_length = decoder_sequences.size(1)
 
         # Sum vocab embeddings and positional embeddings
 
@@ -483,12 +480,12 @@ class Transformer(nn.Module):
          for p in self.parameters():
             if p.dim() > 1:
                nn.init.xavier_uniform_(p, gain = 1.0)
-         nn.init.normal(self.encoder.embedding.weight, mean = 0.0, std = math.pow(self.dim_model, -0.5))
+         nn.init.normal_(self.encoder.embedding.weight, mean = 0.0, std = math.pow(self.dim_model, -0.5))
          self.decoder.embedding.weight = self.encoder.embedding.weight
          self.decoder.fc.weight = self.decoder.embedding.weight
          print("Model initialized.")
 
-    def forward(self, encoder_sequences, encoder_sequences_length, decoder_sequences, decoder_sequences_length):
+    def forward(self, encoder_sequences, decoder_sequences, encoder_sequences_length, decoder_sequences_length):
         """
         Forward propagation
         :param decoder_sequences : the target language sequences, a tensor of size (batch_size, decoder_pad_length)
@@ -497,6 +494,7 @@ class Transformer(nn.Module):
         :param encoder_sequences_length: (true length of encoder sequences)
         :return: encoded source language sequences, a tensor of shape (batch_size, pad_length, dim_model)
         """
+
         encoder_sequences = self.encoder(encoder_sequences, encoder_sequences_length)
 
         decoder_sequences = self.decoder(decoder_sequences, decoder_sequences_length, encoder_sequences, encoder_sequences_length)

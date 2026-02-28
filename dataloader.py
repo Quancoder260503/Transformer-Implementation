@@ -6,9 +6,6 @@ from random import shuffle
 from itertools import groupby
 from torch.nn.utils.rnn import pad_sequence
 
-from average_checkpoints import source_folder
-
-
 class SequenceLoader(object):
     """
     An iterator for loading batches of data into the transformer model
@@ -38,7 +35,7 @@ class SequenceLoader(object):
         self.source_suffix   = source_suffix
         self.target_suffix   = target_suffix
 
-        assert split.lower() in ["train", "valid", "test"], "'Split' must be one of 'train', 'test', 'valid"
+        assert split.lower() in ["train", "val", "test"], "'Split' must be one of 'train', 'test', 'val"
 
         self.split = split.lower()
 
@@ -97,7 +94,7 @@ class SequenceLoader(object):
 
         self.current_batch += 1
         try :
-            source_data, target_data, source_length, target_length = self.all_batches[self.current_batch]
+            source_data, target_data, source_length, target_length = zip(*self.all_batches[self.current_batch])
         except IndexError :
             raise StopIteration
 
@@ -114,8 +111,8 @@ class SequenceLoader(object):
                                    batch_first = True,
                                    padding_value = self.bpe_model.subword_to_id('<PAD>'))
 
-        source_lengths = torch.LongTensor(source_length)
-        target_lengths = torch.LongTensor(target_length)
+        source_length = torch.LongTensor(source_length)
+        target_length = torch.LongTensor(target_length)
 
         return source_data, target_data, source_length, target_length
 

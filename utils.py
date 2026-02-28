@@ -21,22 +21,22 @@ def download_data(data_folder):
       "http://www.statmt.org/wmt14/training-parallel-nc-v9.tgz"
     ]
 
-    if not os.path.isdir(os.path.join(data_folder, "tar files")):
-        os.makedirs(os.path.join(data_folder, "tar files"))
+    if not os.path.isdir(os.path.join(data_folder, "tar_files")):
+        os.makedirs(os.path.join(data_folder, "tar_files"))
     # CREATE a fresh folder to extract downloaded TAR files,
-    if os.path.isdir(os.path.join(data_folder, "extracted files")):
-        shutil.rmtree(os.path.join(data_folder, "extracted files"))
-        os.makedirs(os.path.join(data_folder, "extracted files"))
+    if os.path.isdir(os.path.join(data_folder, "extracted_files")):
+        shutil.rmtree(os.path.join(data_folder, "extracted_files"))
+        os.makedirs(os.path.join(data_folder, "extracted_files"))
 
     for url in train_url :
         filename = url.split("/")[-1]
-        if not os.path.exists(os.path.join(data_folder, "tar files", filename)):
-            print(f"\nDownloading %{filename}...")
-            wget.download(url, os.path.join(data_folder, "tar files", filename))
-        print(f"\nExtracting %{filename}...")
-        tar = tarfile.open(os.path.join(data_folder, "tar files", filename))
+        if not os.path.exists(os.path.join(data_folder, "tar_files", filename)):
+            print(f"\nDownloading {filename}...")
+            wget.download(url, os.path.join(data_folder, "tar_files", filename))
+        print(f"\nExtracting {filename}...")
+        tar = tarfile.open(os.path.join(data_folder, "tar_files", filename))
         members = [m for m in tar.getmembers() if "de-en" in m.path]
-        tar.extractall(os.path.join(data_folder, "extracted files"), members)
+        tar.extractall(os.path.join(data_folder, "extracted_files"), members)
 
     # Download validation and testing data using sacreBLEU
     print("\n")
@@ -46,13 +46,13 @@ def download_data(data_folder):
     os.system("sacrebleu -t wmt14 -l en-de --echo src > '" + os.path.join(data_folder, "test.en") + "'")
     os.system("sacrebleu -t wmt14 -l en-de --echo ref > '" + os.path.join(data_folder, "test.de") + "'")
 
-    dirs = [d for d in os.listdir(os.path.join(data_folder, "extracted files"))
-            if os.path.isdir(os.path.join(data_folder, "extracted files", d))]
+    dirs = [d for d in os.listdir(os.path.join(data_folder, "extracted_files"))
+            if os.path.isdir(os.path.join(data_folder, "extracted_files", d))]
     for dir in dirs :
-        for f in os.listdir(os.path.join(data_folder, "extracted files", dir)):
-            shutil.move(os.path.join(data_folder, "extracted files", dir, f),
-                        os.path.join(data_folder, "extracted files"))
-        os.remove(os.path.join(data_folder, "extracted files", dir))
+        for f in os.listdir(os.path.join(data_folder, "extracted_files", dir)):
+            shutil.move(os.path.join(data_folder, "extracted_files", dir, f),
+                        os.path.join(data_folder, "extracted_files"))
+        os.remove(os.path.join(data_folder, "extracted_files", dir))
 
 def prepare_data(data_folder, euro_parl = False, common_crawl = True, new_commentary = True,
                  min_length = 3, max_length = 100, max_length_ratio = 1.5, retain_case = True):
@@ -84,13 +84,13 @@ def prepare_data(data_folder, euro_parl = False, common_crawl = True, new_commen
   print(f"\n Reading extracted filed and combining ...")
 
   for file in files :
-      with codecs.open(os.path.join(data_folder, "extracted files", file + ".de"), "r", encoding = "utf-8") as f:
+      with codecs.open(os.path.join(data_folder, "extracted_files", file + ".de"), "r", encoding = "utf-8") as f:
           if retain_case :
               german.extend(f.read().split("\n"))
           else:
               german.extend(f.read().lower().split("\n"))
 
-      with codecs.open(os.path.join(data_folder, "extracted files", file + ".en"), "r", encoding = "utf-8") as f :
+      with codecs.open(os.path.join(data_folder, "extracted_files", file + ".en"), "r", encoding = "utf-8") as f :
           if retain_case :
               english.extend(f.read().split("\n"))
           else :
@@ -111,7 +111,7 @@ def prepare_data(data_folder, euro_parl = False, common_crawl = True, new_commen
   youtokentome.BPE.train(data = os.path.join(data_folder, "train.en-de"), vocab_size = 37000,
                          model = os.path.join(data_folder, "bpe.model"))
   print("\nRe-reading BPE model...")
-  bpe_model = youtokentome.BPE.load(os.path.join(data_folder, "bpe.model"))
+  bpe_model = youtokentome.BPE(os.path.join(data_folder, "bpe.model"))
 
   print("\nRe-reading single-files...")
   with codecs.open(os.path.join(data_folder, "train.en"), "r", encoding = "utf-8") as f :
@@ -123,8 +123,8 @@ def prepare_data(data_folder, euro_parl = False, common_crawl = True, new_commen
 
   pairs = list()
   for en, de in tqdm(zip(english, german), total = len(english)):
-      en_tok = bpe_model.encode(en, output_type = youtokentome.BPE.OutputType.ID)
-      de_tok = bpe_model.encond(de, output_type = youtokentome.BPE.OutputType.ID)
+      en_tok = bpe_model.encode(en, output_type = youtokentome.OutputType.ID)
+      de_tok = bpe_model.encode(de, output_type = youtokentome.OutputType.ID)
       len_en_tok = len(en_tok)
       len_de_tok = len(de_tok)
 
@@ -175,7 +175,7 @@ def get_learning_rate(step, d_model, warmup_steps):
     :param warmup_steps: number of warmup steps before the learning rate is increasing linearly
     :return: updated learning rate
     """
-    lr = 2 * math.pow(d_model, 0.5) * min(math.pow(step, -0.5), step * math.pow(warmup_steps, -1.5))
+    lr = 2 * math.pow(d_model, -0.5) * min(math.pow(step, -0.5), step * math.pow(warmup_steps, -1.5))
     return lr
 
 def save_checkpoint(epoch, model, optimizer, prefix_dir_name):

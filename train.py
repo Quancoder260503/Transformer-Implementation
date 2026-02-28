@@ -6,7 +6,9 @@ from model import Transformer, LabelSmoothedCrossEntropy
 from dataloader import SequenceLoader
 from utils import *
 
-data_source_folder = '/Transformer_DL/ssd/transformer data'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+data_source_folder = os.path.join(BASE_DIR, 'database/transformer_data')
 
 # Model parameters
 dim_model = 512  # size of vectors throughout the transformer model
@@ -19,7 +21,8 @@ dropout = 0.1  # dropout probability
 positional_encoding = get_positional_encoding(d_model = dim_model, max_length = 160)  # positional encodings up to the maximum possible pad-length
 
 # Learning parameters
-checkpoint = 'transformer_checkpoint.pth.tar'
+checkpoint = os.path.join(BASE_DIR, 'database/model/transformer_checkpoint.pth.tar')
+
 tokens_in_batch = 2000
 batches_per_step = 25000 // tokens_in_batch  # perform a training step, i.e. update parameters, once every so many batches
 print_frequency = 20
@@ -27,7 +30,6 @@ n_steps = 100000
 warmup_steps = 8000
 step = 1
 lr = get_learning_rate(step = step, d_model= dim_model, warmup_steps = warmup_steps)
-
 betas = (0.9, 0.98)  # beta coefficients in the Adam optimizer
 epsilon = 1e-9  # epsilon term in the Adam optimizer
 label_smoothing = 0.1  # label smoothing co-efficient in the Cross Entropy loss
@@ -91,6 +93,7 @@ def train(train_loader, model, criterion, optimizer, epoch, step):
 
         # Update model after batches_per_step batches
         if (index + 1) % batches_per_step == 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             optimizer.zero_grad()
 
@@ -172,7 +175,10 @@ def main():
     """
     Train and evaluate
     """
+    
+    print("Start training...\n") 
     global checkpoint, step, start_epoch, epoch, epochs
+    print("Loading data from the database...\n")
     train_loader = SequenceLoader(
         data_folder = data_source_folder,
         source_suffix = "en",
@@ -188,7 +194,10 @@ def main():
         split = "val",
         tokens_in_batch = tokens_in_batch
     )
-
+    
+    checkpoint = None 
+    print("Loading model checkpoint if available, set checkpoint to None on the first training step...\n")
+    start_epoch = 0
     if checkpoint is None:
         model = Transformer(
             vocab_size = train_loader.bpe_model.vocab_size(),
@@ -207,7 +216,6 @@ def main():
             betas = betas,
             eps = epsilon
         )
-
     else :
         checkpoint = torch.load(checkpoint)
         start_epoch = checkpoint['epoch'] + 1
@@ -243,7 +251,7 @@ def main():
             criterion = criterion
         )
 
-        save_checkpoint(epoch, model, optimizer)
+        save_checkpoint(epoch, model, optimizer, prefix_dir_name = os.path.join(BASE_DIR, 'database/model'))
 
 if __name__ == "__main__":
     main()
